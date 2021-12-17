@@ -5,43 +5,36 @@ import sys
 import json
 import socket
 import glob
+import boto3
 from s3logparse import s3logparse
 import elasticsearch
 import elasticsearch.helpers
 from elasticsearch import Elasticsearch
+import threading, queue
 
-path = sys.argv[1]
+s3_q = queue.Queue()
+es_q = queue.Queue()
 
-if 'ESURL' not in os.environ:
-    es_url = "http://localhost:9200"
-else:
-    es_url = os.environ['ESURL']
+def s3_worker():
+    while True:
+        obj = s3_q.get()
+        key = obj.key
 
-es = Elasticsearch([es_url])
+        body = obj.get()['Body'].read()
 
-bulk_data = []
+        line = body.decode('utf-8')
 
-# First let's see if the index exists
-if es.indices.exists(index='aws') is False:
-    # We have to create it and add a mapping
-    fh = open('mapping.json')
-    mapping = json.load(fh)
-    es.indices.create(index='aws', body=mapping)
-
-for file in glob.glob(os.path.join(path, "*")):
-    with open(file) as fh:
-
-        for line in s3logparse.parse_log_lines(fh.readlines()):
+        for line in s3logparse.parse_log_lines([line]):
             data = {}
 
             data['id'] = line.request_id
             data['bucket'] = line.bucket
             data['timestamp'] = line.timestamp.isoformat()
             data['remote_ip'] = line.remote_ip
-            #try:
-            #    data['dns'] = socket.gethostbyaddr(line.remote_ip)[0]
-            #except:
-            #    pass
+            try:
+                data['dns'] = socket.gethostbyaddr(line.remote_ip)[0]
+            except:
+                pass
             data['operation'] = line.operation
             data['s3_key'] = line.s3_key
             data['request_uri'] = line.request_uri
@@ -64,13 +57,98 @@ for file in glob.glob(os.path.join(path, "*")):
                 "doc":  data
             }
 
-            bulk_data.append(aws_bulk)
+            es_q.put(aws_bulk)
+        s3_q.task_done()
 
-            if len(bulk_data) > 1000:
-                for ok, item in elasticsearch.helpers.streaming_bulk(es, bulk_data, max_retries=2):
-                    if not ok:
-                        print("ERROR:")
-                        print(item)
-                bulk_data = []
+def es_worker():
+    if 'ESURL' not in os.environ:
+        es_url = "http://localhost:9200"
+    else:
+        es_url = os.environ['ESURL']
 
-            #es.index(id=data['id'], index="aws", document=data, pipeline="geoip")
+    es = Elasticsearch([es_url])
+
+    # First let's see if the index exists
+    if es.indices.exists(index='aws') is False:
+        # We have to create it and add a mapping
+        fh = open('mapping.json')
+        mapping = json.load(fh)
+        es.indices.create(index='aws', body=mapping)
+
+    bulk_data = []
+    while True:
+        obj = es_q.get()
+        bulk_data.append(obj)
+        if len(bulk_data) > 1000:
+            for ok, item in elasticsearch.helpers.streaming_bulk(es, bulk_data, max_retries=2):
+                if not ok:
+                    print("ERROR:")
+                    print(item)
+            bulk_data = []
+        es_q.task_done()
+
+#path = sys.argv[1]
+
+
+#for file in glob.glob(os.path.join(path, "*")):
+#    with open(file) as fh:
+
+threading.Thread(target=es_worker, daemon=True).start()
+
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+threading.Thread(target=s3_worker, daemon=True).start()
+
+session = boto3.Session(
+    aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+    aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+    aws_session_token=os.environ['AWS_SESSION_TOKEN']
+)
+
+s3 = session.resource('s3')
+bucket = s3.Bucket('toolbox-data.anchore.io-logs')
+
+skip = 'access_logs/%s' % sys.argv[1]
+
+#for obj in bucket.objects.all():
+for obj in bucket.objects.filter(Prefix=skip):
+    print(obj.key)
+    s3_q.put(obj)
+
