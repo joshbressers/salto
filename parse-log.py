@@ -6,6 +6,7 @@ import json
 import socket
 import glob
 import boto3
+import time
 from s3logparse import s3logparse
 import elasticsearch
 import elasticsearch.helpers
@@ -16,18 +17,36 @@ s3_q = queue.Queue()
 es_q = queue.Queue()
 
 def s3_worker():
+
+    session = boto3.session.Session()
+    s3 = session.resource('s3',
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+        aws_session_token=os.environ['AWS_SESSION_TOKEN'],
+    )
+
+    bucket = 'toolbox-data.anchore.io-logs'
+
     while True:
-        obj = s3_q.get()
-        key = obj.key
+        key = s3_q.get()
+
+        print(key)
+        obj = s3.Object(bucket, key)
 
         body = obj.get()['Body'].read()
 
         line = body.decode('utf-8')
+        lines = line.split("\n")
 
-        for line in s3logparse.parse_log_lines([line]):
+        if lines[-1] == '':
+            lines = lines[0:-1]
+
+        count = 0
+        for line in s3logparse.parse_log_lines(lines):
+            count = count + 1
             data = {}
 
-            data['id'] = line.request_id
+            data['id'] = obj.key + "-" + str(count)
             data['bucket'] = line.bucket
             data['timestamp'] = line.timestamp.isoformat()
             data['remote_ip'] = line.remote_ip
@@ -41,19 +60,26 @@ def s3_worker():
 
             if line.request_uri is not None:
                 uri = line.request_uri.split(' ')
-                if len(uri) > 3:
+                if len(uri) > 2:
                     data['request_verb'] = uri[0]
                     data['request_uri'] = uri[1]
                     data['request_ver'] = uri[2]
 
+            data['status_code'] = line.status_code
+            data['error_code'] = line.error_code
             data['bytes_sent'] = line.bytes_sent
             data['user_agent'] = line.user_agent
+            data['total_time'] = line.total_time
+            data['turn_around_time'] = line.turn_around_time
+            data['referrer'] = line.referrer
+            data['version_id'] = line.version_id
 
             aws_bulk = {
                 "_op_type": "update",
                 "_index":   "aws",
                 "_id":      data['id'],
                 "doc_as_upsert": True,
+                "pipeline": "aws",
                 "doc":  data
             }
 
@@ -76,10 +102,15 @@ def es_worker():
         es.indices.create(index='aws', body=mapping)
 
     bulk_data = []
+    last_run = False
     while True:
         obj = es_q.get()
-        bulk_data.append(obj)
-        if len(bulk_data) > 1000:
+        if obj == "Done":
+            last_run = True
+        else:
+            bulk_data.append(obj)
+
+        if last_run or len(bulk_data) >= 1000:
             for ok, item in elasticsearch.helpers.streaming_bulk(es, bulk_data, max_retries=2):
                 if not ok:
                     print("ERROR:")
@@ -95,46 +126,8 @@ def es_worker():
 
 threading.Thread(target=es_worker, daemon=True).start()
 
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
-threading.Thread(target=s3_worker, daemon=True).start()
+for i in range(0, 20):
+    threading.Thread(target=s3_worker, daemon=True).start()
 
 session = boto3.Session(
     aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
@@ -149,6 +142,12 @@ skip = 'access_logs/%s' % sys.argv[1]
 
 #for obj in bucket.objects.all():
 for obj in bucket.objects.filter(Prefix=skip):
-    print(obj.key)
-    s3_q.put(obj)
+    s3_q.put(obj.key)
+
+while not s3_q.empty():
+    time.sleep(1)
+
+es_q.put("Done")
+while not es_q.empty():
+    time.sleep(1)
 
