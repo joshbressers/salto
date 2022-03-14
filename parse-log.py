@@ -13,8 +13,8 @@ import elasticsearch.helpers
 from elasticsearch import Elasticsearch
 import threading, queue
 
-s3_q = queue.Queue()
-es_q = queue.Queue()
+s3_q = queue.Queue(maxsize=10000)
+es_q = queue.Queue(maxsize=3000)
 
 def s3_worker():
 
@@ -30,7 +30,6 @@ def s3_worker():
     while True:
         key = s3_q.get()
 
-        print(key)
         obj = s3.Object(bucket, key)
 
         body = obj.get()['Body'].read()
@@ -41,6 +40,8 @@ def s3_worker():
         if lines[-1] == '':
             lines = lines[0:-1]
 
+        print(key)
+
         count = 0
         for line in s3logparse.parse_log_lines(lines):
             count = count + 1
@@ -50,10 +51,10 @@ def s3_worker():
             data['bucket'] = line.bucket
             data['timestamp'] = line.timestamp.isoformat()
             data['remote_ip'] = line.remote_ip
-            try:
-                data['dns'] = socket.gethostbyaddr(line.remote_ip)[0]
-            except:
-                pass
+            #try:
+            #    data['dns'] = socket.gethostbyaddr(line.remote_ip)[0]
+            #except:
+            #    pass
             data['operation'] = line.operation
             data['s3_key'] = line.s3_key
             data['request_uri'] = line.request_uri
@@ -110,7 +111,7 @@ def es_worker():
         else:
             bulk_data.append(obj)
 
-        if last_run or len(bulk_data) >= 1000:
+        if last_run or len(bulk_data) >= 2000:
             for ok, item in elasticsearch.helpers.streaming_bulk(es, bulk_data, max_retries=2):
                 if not ok:
                     print("ERROR:")
