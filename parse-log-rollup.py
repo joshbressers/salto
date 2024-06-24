@@ -66,21 +66,21 @@ def s3_worker():
     while True:
         key = s3_q.get()
 
-        obj = s3.Object(bucket, key)
-
-        body = obj.get()['Body'].read()
-
-        line = body.decode('utf-8')
-        lines = line.split("\n")
-
-        if lines[-1] == '':
-            lines = lines[0:-1]
-
-        q_size = s3_q.qsize()
-        print(f"{key} {q_size}")
-
-        count = 0
         try:
+            obj = s3.Object(bucket, key)
+
+            body = obj.get()['Body'].read()
+
+            line = body.decode('utf-8')
+            lines = line.split("\n")
+
+            if lines[-1] == '':
+                lines = lines[0:-1]
+
+            q_size = s3_q.qsize()
+            print(f"{key} {q_size}")
+
+            count = 0
             for line in s3logparse.parse_log_lines(lines):
                 count = count + 1
 
