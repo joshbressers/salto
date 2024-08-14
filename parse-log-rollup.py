@@ -10,7 +10,6 @@ import time
 from s3logparse import s3logparse
 import threading, queue
 import datetime
-from esbulkstream import Documents
 
 
 lock = threading.Lock()
@@ -25,7 +24,7 @@ def parse_one_line(obj, line, count):
     #data['timestamp'] = line.timestamp.isoformat()
 
     ts = line.timestamp
-    the_time = datetime.datetime(ts.year, ts.month, ts.day, ts.hour, 0, 0)
+    the_time = datetime.datetime(ts.year, ts.month, ts.day, 0, 0, 0)
 
     #data['operation'] = line.operation
     data['request_uri'] = line.request_uri
@@ -110,16 +109,11 @@ while not s3_q.empty():
     time.sleep(1)
 
 
-es = Documents('aws-rollup', mapping='', delete=False)
 
 for i in syft_data:
     entry = { "timestamp": i, "hits": syft_data[i], "app": "syft" }
-    doc_id = f"syft-{i}"
-    error = es.add(entry, doc_id)
+    print(entry)
 
 for i in grype_data:
     entry = { "timestamp": i, "hits": grype_data[i], "app": "grype" }
-    doc_id = f"grype-{i}"
-    error = es.add(entry, doc_id)
-
-es.done()
+    print(entry)
